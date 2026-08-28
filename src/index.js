@@ -286,7 +286,9 @@ function escapeHtml(value) {
 // ======================================================
 // VERIFICATION OAUTH CALLBACK
 // ======================================================
-
+app.get("/", (req,res)=>{
+	return res.status(200).json({status:"running"});
+});
 app.get("/auth/verify/callback", async (req, res) => {
     const { code, state, error } = req.query;
 
