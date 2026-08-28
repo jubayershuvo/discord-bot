@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.bak
+npm-debug.log
+
+# Legacy local-storage artifacts (no longer used — all data is in MongoDB now)
+bot.db
+bot.db-journal
+tokens.json
+oauth_states.json
+authorized_users.json
