@@ -12,7 +12,10 @@ import {
 } from "discord.js";
 
 import setupCommand from "./commands/setup.js";
+import ticketSetupCommand from "./commands/ticket-setup.js";
 import * as wizard from "./handlers/setupWizard.js";
+import * as ticketWizard from "./handlers/ticketSetupWizard.js";
+import * as ticketManager from "./handlers/ticketManager.js";
 
 import memberAdd from "./events/memberAdd.js";
 import memberRemove from "./events/memberRemove.js";
@@ -37,6 +40,7 @@ const client = new Client({
 
 client.commands = new Collection();
 client.commands.set(setupCommand.data.name, setupCommand);
+client.commands.set(ticketSetupCommand.data.name, ticketSetupCommand);
 
 // ======================================================
 // EXPRESS SERVER
@@ -46,8 +50,41 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ======================================================
+// HEALTH CHECK
+// Ping this route from an external uptime service (e.g. UptimeRobot,
+// cron-job.org) every ~10 minutes to keep a free Render instance from
+// spinning down. Not needed on a paid instance.
+// ======================================================
+
+app.get("/", (req, res) => {
+    res.json({
+        status: "ok",
+        discord: client.isReady() ? "connected" : "connecting",
+        uptime_seconds: Math.floor(process.uptime())
+    });
+});
+
+// ======================================================
+// CRASH SAFETY
+// Prevents a stray unhandled error from killing the whole process,
+// which on Render shows up as the bot randomly going offline.
+// ======================================================
+
+process.on("unhandledRejection", (reason) => {
+    console.error("❌ Unhandled rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+    console.error("❌ Uncaught exception:", error);
+});
+
+// ======================================================
 // READY
 // ======================================================
+
+client.on("error", (error) => {
+    console.error("❌ Discord client error:", error);
+});
 
 client.once("ready", async () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
@@ -56,7 +93,7 @@ client.once("ready", async () => {
 
     try {
         await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), {
-            body: [setupCommand.data.toJSON()]
+            body: [setupCommand.data.toJSON(), ticketSetupCommand.data.toJSON()]
         });
 
         console.log("✅ Slash commands registered");
@@ -122,6 +159,33 @@ client.on("interactionCreate", async (interaction) => {
 
                 case "verify_user":
                     return handleVerification(interaction);
+
+                case "ticket_setup_start":
+                    return ticketWizard.startTicketSetup(interaction);
+
+                case "ticket_system_enable":
+                    return ticketWizard.ticketSystemChoice(interaction, true);
+
+                case "ticket_system_disable":
+                    return ticketWizard.ticketSystemChoice(interaction, false);
+
+                case "ticket_category_skip":
+                    return ticketWizard.ticketCategorySkip(interaction);
+
+                case "ticket_create":
+                    return ticketManager.handleTicketCreate(interaction);
+
+                case "ticket_close":
+                    return ticketManager.handleTicketClose(interaction);
+
+                case "ticket_close_confirm":
+                    return ticketManager.handleTicketCloseConfirm(interaction);
+
+                case "ticket_close_cancel":
+                    return ticketManager.handleTicketCloseCancel(interaction);
+
+                case "ticket_add_user":
+                    return ticketManager.handleTicketAddUserButton(interaction);
             }
 
             return;
@@ -144,6 +208,12 @@ client.on("interactionCreate", async (interaction) => {
 
                 case "ban_channel":
                     return wizard.banChannel(interaction);
+
+                case "ticket_category":
+                    return ticketWizard.ticketCategory(interaction);
+
+                case "ticket_panel_channel":
+                    return ticketWizard.ticketPanelChannel(interaction);
             }
 
             return;
@@ -160,6 +230,22 @@ client.on("interactionCreate", async (interaction) => {
 
                 case "verification_role":
                     return wizard.verificationRole(interaction);
+
+                case "ticket_support_role":
+                    return ticketWizard.ticketSupportRole(interaction);
+            }
+
+            return;
+        }
+
+        // ==================================================
+        // USER SELECT MENUS
+        // ==================================================
+
+        if (interaction.isUserSelectMenu()) {
+            switch (interaction.customId) {
+                case "ticket_add_user_select":
+                    return ticketManager.handleTicketAddUserSelect(interaction);
             }
         }
     } catch (error) {
@@ -286,9 +372,7 @@ function escapeHtml(value) {
 // ======================================================
 // VERIFICATION OAUTH CALLBACK
 // ======================================================
-app.get("/", (req,res)=>{
-	return res.status(200).json({status:"running"});
-});
+
 app.get("/auth/verify/callback", async (req, res) => {
     const { code, state, error } = req.query;
 

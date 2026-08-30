@@ -1,5 +1,5 @@
 import { connectDatabase } from "./connection.js";
-import { GuildConfig, OAuthState, AuthorizedUser } from "./models.js";
+import { GuildConfig, OAuthState, AuthorizedUser, Ticket } from "./models.js";
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -12,7 +12,14 @@ const CONFIG_FIELDS = [
     "verification_channel",
     "verification_role",
     "leave_channel",
-    "ban_channel"
+    "ban_channel",
+    "ticket_system_enabled",
+    "support_role_id",
+    "ticket_category_id",
+    "ticket_channel_id",
+    "ticket_panel_message_id"
+    // ticket_counter is intentionally excluded — it's only ever changed via
+    // incrementTicketCounter's atomic $inc, never overwritten wholesale.
 ];
 
 // ======================================================
@@ -120,6 +127,63 @@ export async function saveAuthorizedUser(user) {
 
 export async function getAuthorizedUser(discordUserId) {
     return AuthorizedUser.findOne({ discord_user_id: discordUserId }).lean();
+}
+
+// ======================================================
+// TICKETS
+// ======================================================
+
+/**
+ * Atomically increments and returns a guild's ticket counter. Using $inc
+ * (rather than read-then-write) means two tickets created at the same
+ * moment can never end up with the same number.
+ */
+export async function incrementTicketCounter(guildId) {
+    const config = await GuildConfig.findOneAndUpdate(
+        { guild_id: guildId },
+        { $inc: { ticket_counter: 1 } },
+        { upsert: true, new: true }
+    ).lean();
+
+    return config.ticket_counter;
+}
+
+export async function setTicketPanelMessage(guildId, messageId) {
+    await GuildConfig.findOneAndUpdate(
+        { guild_id: guildId },
+        { $set: { ticket_panel_message_id: messageId } },
+        { upsert: true, new: true }
+    );
+}
+
+export async function createTicketRecord({ guild_id, channel_id, owner_id, ticket_number }) {
+    return Ticket.create({
+        guild_id,
+        channel_id,
+        owner_id,
+        ticket_number,
+        status: "open",
+        created_at: new Date()
+    });
+}
+
+/**
+ * Returns the caller's currently open ticket in this guild, or null.
+ * Used to block duplicate ticket creation.
+ */
+export async function getOpenTicketForUser(guildId, ownerId) {
+    return Ticket.findOne({ guild_id: guildId, owner_id: ownerId, status: "open" }).lean();
+}
+
+export async function getTicketByChannel(channelId) {
+    return Ticket.findOne({ channel_id: channelId }).lean();
+}
+
+export async function closeTicketRecord(channelId) {
+    await Ticket.findOneAndUpdate(
+        { channel_id: channelId },
+        { $set: { status: "closed", closed_at: new Date() } }
+    );
 }
 
 export { connectDatabase };

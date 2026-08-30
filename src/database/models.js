@@ -22,12 +22,46 @@ const guildConfigSchema = new Schema(
         verification_role: { type: String, default: null },
 
         leave_channel: { type: String, default: null },
-        ban_channel: { type: String, default: null }
+        ban_channel: { type: String, default: null },
+
+        ticket_system_enabled: { type: Boolean, default: false },
+        support_role_id: { type: String, default: null },
+        ticket_category_id: { type: String, default: null },
+        ticket_channel_id: { type: String, default: null },
+        ticket_panel_message_id: { type: String, default: null },
+        // Managed only via atomic $inc (see incrementTicketCounter) — never
+        // written through the generic updateConfig whitelist.
+        ticket_counter: { type: Number, default: 0 }
     },
     { timestamps: true }
 );
 
 export const GuildConfig = model("GuildConfig", guildConfigSchema);
+
+// ======================================================
+// TICKET
+// One document per open/closed support ticket. Used to enforce
+// "one open ticket per user per guild" and to look up which ticket
+// a given channel belongs to.
+// ======================================================
+
+const ticketSchema = new Schema(
+    {
+        guild_id: { type: String, required: true, index: true },
+        channel_id: { type: String, required: true, unique: true, index: true },
+        owner_id: { type: String, required: true },
+        ticket_number: { type: Number, required: true },
+        status: { type: String, enum: ["open", "closed"], default: "open" },
+        created_at: { type: Date, default: Date.now },
+        closed_at: { type: Date, default: null }
+    },
+    { timestamps: true }
+);
+
+// Fast lookup for "does this user already have an open ticket in this guild?"
+ticketSchema.index({ guild_id: 1, owner_id: 1, status: 1 });
+
+export const Ticket = model("Ticket", ticketSchema);
 
 // ======================================================
 // OAUTH STATE
